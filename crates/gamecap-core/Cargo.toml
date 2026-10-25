@@ -1,0 +1,22 @@
+[package]
+name = "gamecap-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Recorder state machine, clock, bounded queues, and policies"
+
+[dependencies]
+gamecap-types.workspace = true
+gamecap-metrics.workspace = true
+gamecap-config.workspace = true
+gamecap-capture.workspace = true
+gamecap-audio.workspace = true
+gamecap-video.workspace = true
+gamecap-encoder.workspace = true
+gamecap-mux.workspace = true
+gamecap-hardware.workspace = true
+
+[lints]
+workspace = true

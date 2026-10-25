@@ -1,0 +1,10 @@
+[package]
+name = "gamecap-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Desktop UI (Milestone M7). Stub in M0."
+
+[lints]
+workspace = true

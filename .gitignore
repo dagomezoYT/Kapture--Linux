@@ -1,0 +1,18 @@
+/target/
+/bin/
+**/*.rs.bk
+.idea/
+.vscode/
+*.swp
+*.swo
+.toolchain/
+.cargo-home/
+*.mkv
+*.mp4
+*.log
+/tmp-session/
+.DS_Store
+
+# Python cache
+__pycache__/
+*.pyc

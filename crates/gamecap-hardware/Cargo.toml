@@ -1,0 +1,17 @@
+[package]
+name = "gamecap-hardware"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Read-only hardware probing; never mutates clocks, firmware or sysfs"
+
+[dependencies]
+gamecap-types.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[lints]
+workspace = true

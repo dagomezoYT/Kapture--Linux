@@ -1,0 +1,14 @@
+[package]
+name = "gamecap-encoder-amd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "AMD AMF / VAAPI adapter (Milestone M4)"
+
+[dependencies]
+gamecap-types.workspace = true
+gamecap-encoder.workspace = true
+
+[lints]
+workspace = true

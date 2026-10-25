@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Instalar Kapture
+Comment=Instala Kapture en el menú de aplicaciones
+Exec=/home/kebuxos/Escritorio/Proyectos/Kebux-Recording/scripts/gamecap-setup.sh
+Path=/home/kebuxos/Escritorio/Proyectos/Kebux-Recording
+Icon=gamecap
+Terminal=false
+Categories=Settings;
+StartupNotify=true

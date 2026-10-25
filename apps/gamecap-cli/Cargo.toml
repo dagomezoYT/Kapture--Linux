@@ -1,0 +1,29 @@
+[package]
+name = "gamecap-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "GameCap command-line interface"
+
+[[bin]]
+name = "gamecap"
+path = "src/main.rs"
+
+[dependencies]
+gamecap-core.workspace = true
+gamecap-types.workspace = true
+gamecap-config.workspace = true
+gamecap-capture.workspace = true
+gamecap-audio.workspace = true
+gamecap-encoder.workspace = true
+gamecap-mux.workspace = true
+gamecap-hardware.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gamecap-capture-linux.workspace = true
+gamecap-audio-linux.workspace = true
+gamecap-encoder-ffmpeg.workspace = true
+
+[lints]
+workspace = true

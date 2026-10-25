@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Kapture
+Comment=Record what matters — grabadora de juegos
+Exec=/home/kebuxos/Escritorio/Proyectos/Kebux-Recording/scripts/gamecap-launch.sh
+Path=/home/kebuxos/Escritorio/Proyectos/Kebux-Recording
+Icon=gamecap
+Terminal=false
+Categories=AudioVideo;Recorder;Game;
+StartupNotify=true
+StartupWMClass=dev.kebux.gamecap
+Keywords=grabar;juego;replay;minecraft;kapture;vyro;

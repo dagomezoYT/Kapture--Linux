@@ -1,0 +1,41 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/*",
+    "apps/*",
+    "tests/integration",
+    "tests/stress",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.80"
+authors = ["GameCap"]
+repository = "https://github.com/kebux/gamecap"
+description = "High-fidelity cross-platform game recorder"
+
+[workspace.lints.rust]
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+todo = "warn"
+unimplemented = "warn"
+
+[workspace.dependencies]
+gamecap-types = { path = "crates/gamecap-types" }
+gamecap-metrics = { path = "crates/gamecap-metrics" }
+gamecap-config = { path = "crates/gamecap-config" }
+gamecap-hardware = { path = "crates/gamecap-hardware" }
+gamecap-capture = { path = "crates/gamecap-capture" }
+gamecap-audio = { path = "crates/gamecap-audio" }
+gamecap-video = { path = "crates/gamecap-video" }
+gamecap-encoder = { path = "crates/gamecap-encoder" }
+gamecap-mux = { path = "crates/gamecap-mux" }
+gamecap-core = { path = "crates/gamecap-core" }
+gamecap-capture-linux = { path = "crates/gamecap-capture-linux" }
+gamecap-audio-linux = { path = "crates/gamecap-audio-linux" }
+gamecap-encoder-ffmpeg = { path = "crates/gamecap-encoder-ffmpeg" }

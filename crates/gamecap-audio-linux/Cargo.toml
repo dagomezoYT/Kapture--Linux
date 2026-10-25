@@ -1,0 +1,15 @@
+[package]
+name = "gamecap-audio-linux"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "PipeWire audio capture (Milestone M1)"
+
+[dependencies]
+gamecap-audio.workspace = true
+gamecap-types.workspace = true
+rustix = { version = "0.38", default-features = true }
+
+[lints]
+workspace = true

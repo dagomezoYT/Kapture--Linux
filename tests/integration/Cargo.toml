@@ -1,0 +1,23 @@
+[package]
+name = "gamecap-integration-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Cross-crate pipeline tests for Milestone M0"
+
+[dependencies]
+gamecap-core.workspace = true
+gamecap-types.workspace = true
+gamecap-config.workspace = true
+gamecap-capture.workspace = true
+gamecap-audio.workspace = true
+gamecap-encoder.workspace = true
+gamecap-mux.workspace = true
+gamecap-metrics.workspace = true
+gamecap-video.workspace = true
+gamecap-hardware.workspace = true
+
+[lints]
+workspace = true

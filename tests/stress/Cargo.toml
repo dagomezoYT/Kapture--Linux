@@ -1,0 +1,11 @@
+[package]
+name = "gamecap-stress-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Long-run and disk-pressure tests (later milestones)"
+
+[lints]
+workspace = true
