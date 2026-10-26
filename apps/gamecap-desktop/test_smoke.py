@@ -131,6 +131,82 @@ def main() -> int:
         fails += 1
     import encode_profile as enc
 
+    legacy = enc.plan_encode(
+        "av1", "ultra", 240, True, "1920x1080", enc.LEGACY, frozenset({"av1", "av1_hdr", "av1_10bit"})
+    )
+    if legacy.fps != 60 or legacy.quality != "high" or legacy.codec != "av1" or legacy.encoder is not None:
+        print(f"  FAIL: el perfil VA-API cambió el plan que ya grababa ({legacy})")
+        fails += 1
+    if legacy.scale != "1920x1080":
+        print(f"  FAIL: la escala 1080p no se conservó ({legacy.scale})")
+        fails += 1
+    nvidia = enc.plan_encode("av1", "ultra", 120, True, "0x0", enc.DISCRETE_NVIDIA, frozenset({"av1", "hevc", "h264"}))
+    if nvidia.quality != "ultra" or nvidia.fps != 120 or nvidia.encoder is not None or nvidia.scale is not None:
+        print(f"  FAIL: NVENC no aceptó el preset pedido ({nvidia})")
+        fails += 1
+    if enc.allows_ultra(enc.budget_for("amd", True)) or enc.budget_for("amd", True).name != "vaapi-safe":
+        print("  FAIL: la 780M (AMD con panel) no debe ofrecer Ultra")
+        fails += 1
+    discrete = enc.budget_for("amd", False)
+    discrete_plan = enc.plan_encode("av1", "ultra", 180, True, "0x0", discrete, None)
+    if (
+        not enc.allows_ultra(discrete)
+        or discrete.name != "vaapi-discrete"
+        or discrete_plan.quality != "ultra"
+        or discrete_plan.fps != 120
+        or discrete_plan.encoder is not None
+    ):
+        print(f"  FAIL: una AMD de escritorio debe aceptar Ultra y topar a 120 fps ({discrete_plan})")
+        fails += 1
+    if not enc.allows_ultra(enc.budget_for("nvidia", True)) or enc.allows_ultra(enc.budget_for("intel", True)):
+        print("  FAIL: Ultra debe seguir a la GPU de la pantalla, no al panel Intel")
+        fails += 1
+    import i18n
+
+    i18n.set_language("en")
+    if i18n.t("nav.record") != "Record" or i18n.t("ultra.use") != "Record in Ultra":
+        print("  FAIL: el catálogo en inglés no responde")
+        fails += 1
+    i18n.set_language("es")
+    if i18n.t("status.recording_clock", clock="01:02") != "● Grabando 01:02":
+        print("  FAIL: el estado en español no se formatea")
+        fails += 1
+    if i18n.set_language("no-such") != "es":
+        print("  FAIL: un idioma desconocido debe volver a español")
+        fails += 1
+    if set(i18n.ES) != set(i18n.EN):
+        print(f"  FAIL: faltan claves de idioma {set(i18n.ES) ^ set(i18n.EN)}")
+        fails += 1
+    soft = enc.plan_encode("av1", "high", 60, True, "0x0", enc.SOFTWARE, None)
+    if soft.codec != "h264" or soft.fps != 30 or soft.encoder != "cpu" or soft.scale != "1280x720":
+        print(f"  FAIL: sin GPU de encode debe bajar a H.264 720p30 por CPU ({soft})")
+        fails += 1
+    if enc.resolve_codec("h264", None) != "h264":
+        print("  FAIL: un sondeo ausente no debe reescribir el códec")
+        fails += 1
+    if enc.resolve_codec("h264", frozenset({"av1", "av1_hdr"})) != "av1":
+        print("  FAIL: H.264 pedido en una GPU solo-AV1 debe caer a AV1")
+        fails += 1
+    vendor, codecs = enc.parse_gsr_info(
+        "section=gpu_info\nvendor|amd\nsection=video_codecs\nav1\nav1_hdr\nav1_10bit\nsection=image_formats\njpeg\n"
+    )
+    if vendor != "amd" or codecs != frozenset({"av1", "av1_hdr", "av1_10bit"}):
+        print(f"  FAIL: parseo de gpu-screen-recorder --info ({vendor}, {codecs})")
+        fails += 1
+    import gpu as gpu_mod
+
+    panel = gpu_mod.Gpu("card1", "/dev/dri/card1", "amd", "AMD", ("eDP-1",), "/dev/dri/renderD128", True)
+    discrete = gpu_mod.Gpu("card0", "/dev/dri/card0", "nvidia", "NVIDIA", (), "", False)
+    chosen = gpu_mod.choose_record_gpu([discrete, panel])
+    if chosen is None or chosen.vendor != "amd":
+        print(f"  FAIL: el portátil híbrido debe grabar en la GPU del panel ({chosen})")
+        fails += 1
+    only_nv = gpu_mod.choose_record_gpu(
+        [gpu_mod.Gpu("card0", "/dev/dri/card0", "nvidia", "NVIDIA", ("HDMI-A-1",), "", False)]
+    )
+    if only_nv is None or only_nv.vendor != "nvidia":
+        print(f"  FAIL: un escritorio NVIDIA debe grabar en NVIDIA ({only_nv})")
+        fails += 1
     if enc.normalize_audio_bitrate(96) != 192:
         print("  FAIL: 96 kbps must rise to 192 so the editor WAV is not crunchy")
         fails += 1

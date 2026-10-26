@@ -8,6 +8,7 @@ description = "Delimited H.264 backends: FFmpeg NVENC/VAAPI and OpenH264"
 
 [dependencies]
 gamecap-encoder.workspace = true
+gamecap-hardware.workspace = true
 gamecap-types.workspace = true
 openh264 = { version = "0.6.6", default-features = false, features = ["source"] }
 

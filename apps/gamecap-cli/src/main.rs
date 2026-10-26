@@ -32,12 +32,22 @@ const KEYINT_DEFAULT: f64 = 1.5;
 const KEYINT_MIN: f64 = 1.0;
 const KEYINT_MAX: f64 = 2.0;
 
-fn normalize_quality(quality: &str) -> &str {
+fn normalize_quality(quality: &str, allow_ultra: bool) -> &'static str {
     match quality {
         "medium" => "medium",
+        // Ultra is kept only when the display GPU is stronger than the
+        // integrated baseline. Otherwise very_high/ultra collapse to high.
+        "ultra" if allow_ultra => "ultra",
+        "very_high" if allow_ultra => "very_high",
         "high" | "very_high" | "ultra" => "high",
         _ => "high",
     }
+}
+
+/// Portal fallback order. NVIDIA that owns the display tries NVENC before VA-API.
+/// Every other vendor keeps the historical order (VA-API AV1, then NVENC, then software).
+fn portal_tries_nvenc_first(vendor: gamecap_hardware::GpuVendor) -> bool {
+    vendor == gamecap_hardware::GpuVendor::Nvidia
 }
 
 fn main() -> ExitCode {
@@ -74,7 +84,7 @@ fn print_help() {
          gamecap gui\n  \
          gamecap toggle\n  \
          gamecap record [--until-stop] [--duration-secs N] [--output-dir DIR]\n            \
-         [--monitor] [--region WxH+X+Y] [--now] [--portal]\n            \
+         [--monitor] [--region WxH+X+Y] [--now] [--portal] [--encoder cpu|gpu]\n            \
          [--status-file PATH] [--stop-file PATH] [--output-name FILE]\n  \
          gamecap run-fake --fps 144 --duration-secs 10 [--width 128 --height 72]\n"
     );
@@ -133,9 +143,8 @@ fn run_fake(args: &[String]) -> Result<(), String> {
 }
 
 fn run_gui() -> Result<(), String> {
-    let script = desktop_script("ui.py").ok_or_else(|| {
-        "no se encontró apps/gamecap-desktop/ui.py".to_string()
-    })?;
+    let script = desktop_script("ui.py")
+        .ok_or_else(|| "no se encontró apps/gamecap-desktop/ui.py".to_string())?;
     let status = Command::new("python3")
         .arg(&script)
         .status()
@@ -148,9 +157,8 @@ fn run_gui() -> Result<(), String> {
 }
 
 fn run_toggle() -> Result<(), String> {
-    let script = desktop_script("toggle.py").ok_or_else(|| {
-        "no se encontró apps/gamecap-desktop/toggle.py".to_string()
-    })?;
+    let script = desktop_script("toggle.py")
+        .ok_or_else(|| "no se encontró apps/gamecap-desktop/toggle.py".to_string())?;
     let status = Command::new("python3")
         .arg(&script)
         .status()
@@ -193,14 +201,13 @@ fn run_record(args: &[String]) -> Result<(), String> {
 #[cfg(target_os = "linux")]
 fn linux_record(args: &[String]) -> Result<(), String> {
     use gamecap_capture_linux::{
-        detect_display_mode, gst_nvh264enc_available, gst_vaav1enc_available,
-        PortalPipeWireCapture,
+        detect_display_mode, gst_nvh264enc_available, gst_vaav1enc_available, PortalPipeWireCapture,
     };
     use gamecap_mux::MkvMuxer;
 
     let until_stop = args.iter().any(|a| a == "--until-stop");
-    let duration_secs = parse_u32_flag(args, "--duration-secs")?
-        .unwrap_or(if until_stop { 0 } else { 10 });
+    let duration_secs =
+        parse_u32_flag(args, "--duration-secs")?.unwrap_or(if until_stop { 0 } else { 10 });
     let duration = Duration::from_secs(u64::from(duration_secs.max(1)));
     let output_dir = match parse_string_flag(args, "--output-dir") {
         Some(dir) => PathBuf::from(dir),
@@ -240,6 +247,7 @@ fn linux_record(args: &[String]) -> Result<(), String> {
             scale: parse_string_flag(args, "--scale"),
             replay_secs: parse_u32_flag(args, "--replay-secs")?.unwrap_or(0),
             ipc: parse_string_flag(args, "--ipc"),
+            encoder: parse_string_flag(args, "--encoder"),
         }) {
             Ok(()) => return Ok(()),
             Err(err) => {
@@ -248,9 +256,14 @@ fn linux_record(args: &[String]) -> Result<(), String> {
         }
     }
     println!("Comprobando encoder de vídeo...");
+    let vendor = gamecap_hardware::display_vendor();
     let va_av1 = gst_vaav1enc_available();
-    let gst_nvenc = !va_av1 && gst_nvh264enc_available();
-    let (encoder, encoder_name) = select_linux_encoder(hz, va_av1, gst_nvenc);
+    let gst_nvenc = if portal_tries_nvenc_first(vendor) {
+        gst_nvh264enc_available()
+    } else {
+        !va_av1 && gst_nvh264enc_available()
+    };
+    let (encoder, encoder_name) = select_linux_encoder(hz, va_av1, gst_nvenc, vendor);
     let capture = if va_av1 {
         PortalPipeWireCapture::new().with_gst_va_av1()
     } else if gst_nvenc {
@@ -351,6 +364,7 @@ struct GsrOptions<'a> {
     scale: Option<&'a str>,
     replay_secs: u32,
     ipc: Option<&'a str>,
+    encoder: Option<&'a str>,
 }
 
 #[cfg(target_os = "linux")]
@@ -384,7 +398,7 @@ fn record_with_gsr(opts: GsrOptions<'_>) -> Result<(), String> {
         "mp4" | "mkv" | "webm" => opts.container,
         _ => "mkv",
     };
-    let quality = normalize_quality(opts.quality);
+    let quality = normalize_quality(opts.quality, gamecap_hardware::display_allows_ultra());
     let frame_mode = match opts.frame_mode {
         // KMS only supports vfr|cfr; content is X11/portal. Prefer vfr over cfr
         // to avoid encoder death spiral when game FPS dips.
@@ -408,9 +422,7 @@ fn record_with_gsr(opts: GsrOptions<'_>) -> Result<(), String> {
     let hz_s = hz.to_string();
     let out_s = out.to_string_lossy().into_owned();
     println!("Comprobando encoder de vídeo...");
-    println!(
-        "Encoder: gpu-screen-recorder KMS ({codec}, rango completo, misma GPU que el panel)"
-    );
+    println!("Encoder: gpu-screen-recorder KMS ({codec}, rango completo, misma GPU que el panel)");
     match &target {
         GsrTarget::Monitor(name) => println!(
             "Pantalla: {}×{} @ {hz} Hz — monitor {name} completo.",
@@ -458,7 +470,17 @@ fn record_with_gsr(opts: GsrOptions<'_>) -> Result<(), String> {
         "-cursor".into(),
         cursor.into(),
     ];
-    if let Some(scale) = opts.scale.filter(|s| !s.is_empty() && *s != "0x0" && *s != "native") {
+    if let Some(encoder) = opts
+        .encoder
+        .filter(|value| *value == "cpu" || *value == "gpu")
+    {
+        args.push("-encoder".into());
+        args.push((*encoder).to_string());
+    }
+    if let Some(scale) = opts
+        .scale
+        .filter(|s| !s.is_empty() && *s != "0x0" && *s != "native")
+    {
         args.push("-s".into());
         args.push(scale.to_string());
         println!("Resolución límite: {scale}");
@@ -476,7 +498,10 @@ fn record_with_gsr(opts: GsrOptions<'_>) -> Result<(), String> {
     }
     let audio_sources: Vec<&str> = if opts.audio_sources.is_empty() {
         vec!["default_output"]
-    } else if opts.audio_sources.iter().any(|s| *s == "none" || s.is_empty())
+    } else if opts
+        .audio_sources
+        .iter()
+        .any(|s| *s == "none" || s.is_empty())
         && opts.audio_sources.len() == 1
     {
         Vec::new()
@@ -768,10 +793,7 @@ fn arm_game_focus() {
 
 #[cfg(target_os = "linux")]
 fn gnome_select_area() -> Option<String> {
-    let dests = [
-        "org.gnome.Shell.Screenshot",
-        "org.gnome.Shell",
-    ];
+    let dests = ["org.gnome.Shell.Screenshot", "org.gnome.Shell"];
     for dest in dests {
         let Ok(out) = Command::new("gdbus")
             .args([
@@ -1019,13 +1041,15 @@ fn select_linux_encoder(
     hz: u32,
     va_av1: bool,
     gst_nvenc: bool,
+    vendor: gamecap_hardware::GpuVendor,
 ) -> (Box<dyn gamecap_encoder::VideoEncoder>, &'static str) {
     use gamecap_encoder_ffmpeg::{AnnexBPassthroughEncoder, FfmpegH264Encoder, OpenH264Encoder};
 
-    if va_av1 {
+    let nvidia_first = portal_tries_nvenc_first(vendor);
+    if va_av1 && !nvidia_first {
         return (
             Box::new(AnnexBPassthroughEncoder::av1()),
-            "vaav1enc AMD (DMA-BUF, misma GPU que el monitor)",
+            "vaav1enc (DMA-BUF, GPU del monitor)",
         );
     }
     if gst_nvenc {
@@ -1045,6 +1069,12 @@ fn select_linux_encoder(
             "h264_nvenc (ffmpeg)"
         };
         return (Box::new(encoder), name);
+    }
+    if nvidia_first && va_av1 {
+        return (
+            Box::new(AnnexBPassthroughEncoder::av1()),
+            "vaav1enc (DMA-BUF, GPU del monitor)",
+        );
     }
     if FfmpegH264Encoder::vaapi_available() {
         let mut encoder = FfmpegH264Encoder::vaapi();
@@ -1148,4 +1178,33 @@ fn parse_all_string_flags<'a>(args: &'a [String], flag: &str) -> Vec<&'a str> {
         .filter(|pair| pair[0] == flag)
         .map(|pair| pair[1].as_str())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_quality, portal_tries_nvenc_first};
+    use gamecap_hardware::GpuVendor;
+
+    #[test]
+    fn vaapi_quality_stays_on_the_safe_preset() {
+        assert_eq!(normalize_quality("ultra", false), "high");
+        assert_eq!(normalize_quality("very_high", false), "high");
+        assert_eq!(normalize_quality("high", false), "high");
+        assert_eq!(normalize_quality("medium", false), "medium");
+    }
+
+    #[test]
+    fn a_stronger_gpu_keeps_ultra() {
+        assert_eq!(normalize_quality("ultra", true), "ultra");
+        assert_eq!(normalize_quality("very_high", true), "very_high");
+        assert_eq!(normalize_quality("medium", true), "medium");
+    }
+
+    #[test]
+    fn only_nvidia_reorders_the_portal_fallback() {
+        assert!(portal_tries_nvenc_first(GpuVendor::Nvidia));
+        assert!(!portal_tries_nvenc_first(GpuVendor::Amd));
+        assert!(!portal_tries_nvenc_first(GpuVendor::Intel));
+        assert!(!portal_tries_nvenc_first(GpuVendor::Other));
+    }
 }

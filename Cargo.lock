@@ -373,6 +373,7 @@ name = "gamecap-encoder-ffmpeg"
 version = "0.1.0"
 dependencies = [
  "gamecap-encoder",
+ "gamecap-hardware",
  "gamecap-types",
  "openh264",
 ]

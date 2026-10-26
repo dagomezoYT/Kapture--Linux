@@ -400,7 +400,7 @@ impl VideoEncoder for FfmpegH264Encoder {
     fn capabilities(&self) -> EncoderCaps {
         let (vendor, name) = match self.kind {
             HwKind::Nvenc => (EncoderVendor::Nvidia, "ffmpeg-nvenc"),
-            HwKind::Vaapi => (EncoderVendor::Amd, "ffmpeg-vaapi"),
+            HwKind::Vaapi => (vaapi_vendor(), "ffmpeg-vaapi"),
         };
         EncoderCaps {
             vendor,
@@ -719,6 +719,16 @@ fn wait_child(child: &mut Child, timeout: Duration) {
     }
 }
 
+fn vaapi_vendor() -> EncoderVendor {
+    match gamecap_hardware::display_vendor() {
+        gamecap_hardware::GpuVendor::Intel => EncoderVendor::Intel,
+        gamecap_hardware::GpuVendor::Nvidia => EncoderVendor::Nvidia,
+        // Unknown stays on the historical label so a failed probe does not
+        // reclassify a working VA-API encoder as software.
+        gamecap_hardware::GpuVendor::Amd | gamecap_hardware::GpuVendor::Other => EncoderVendor::Amd,
+    }
+}
+
 fn vaapi_render_nodes() -> Vec<String> {
     let dir = match std::fs::read_dir("/dev/dri") {
         Ok(d) => d,
@@ -735,6 +745,18 @@ fn vaapi_render_nodes() -> Vec<String> {
         .map(|p| p.to_string_lossy().into_owned())
         .collect();
     nodes.sort();
+    prefer_render_node(nodes, gamecap_hardware::display_render_node().as_deref())
+}
+
+/// Put the display GPU's render node first. Other nodes keep their order.
+fn prefer_render_node(mut nodes: Vec<String>, preferred: Option<&str>) -> Vec<String> {
+    let Some(preferred) = preferred else {
+        return nodes;
+    };
+    if let Some(pos) = nodes.iter().position(|node| node == preferred) {
+        let node = nodes.remove(pos);
+        nodes.insert(0, node);
+    }
     nodes
 }
 
@@ -805,6 +827,29 @@ mod tests {
         assert_eq!(nals[0][0], 0x67);
         assert_eq!(nals[1][0], 0x65);
         assert_eq!(buf, vec![0, 0, 0, 1]);
+    }
+
+    #[test]
+    fn display_render_node_is_probed_first() {
+        let nodes = vec![
+            "/dev/dri/renderD128".to_string(),
+            "/dev/dri/renderD129".to_string(),
+        ];
+        let ordered = prefer_render_node(nodes, Some("/dev/dri/renderD129"));
+        assert_eq!(
+            ordered,
+            vec![
+                "/dev/dri/renderD129".to_string(),
+                "/dev/dri/renderD128".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn missing_preferred_node_keeps_probe_order() {
+        let nodes = vec!["/dev/dri/renderD128".to_string()];
+        let ordered = prefer_render_node(nodes.clone(), Some("/dev/dri/renderD129"));
+        assert_eq!(ordered, nodes);
     }
 
     #[test]

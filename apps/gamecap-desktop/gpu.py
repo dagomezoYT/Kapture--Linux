@@ -30,6 +30,8 @@ class Gpu:
     vendor: str
     name: str
     outputs: tuple[str, ...]
+    render_node: str = ""
+    integrated: bool = False
 
     @property
     def drives_display(self) -> bool:
@@ -51,24 +53,25 @@ def choose_record_gpu(gpus: list[Gpu]) -> Gpu | None:
 
 
 def describe(gpus: list[Gpu], chosen: Gpu | None) -> str:
+    import i18n
+
     nvidia = next((gpu for gpu in gpus if gpu.vendor == "nvidia"), None)
     if chosen is None:
-        return "No hay una pantalla conectada a una gráfica."
+        return i18n.t("gpu.none")
     if nvidia is not None and chosen.vendor != "nvidia":
-        return (
-            f"Grabación en {chosen.name}: ahí está la pantalla. "
-            f"{nvidia.name} queda libre para el juego."
-        )
+        return i18n.t("gpu.hybrid", gpu=chosen.name, spare=nvidia.name)
     if chosen.vendor == "nvidia":
-        return f"Grabación en {chosen.name}. Esa gráfica tiene la pantalla."
-    return f"Grabación en {chosen.name}."
+        return i18n.t("gpu.nvidia", gpu=chosen.name)
+    return i18n.t("gpu.plain", gpu=chosen.name)
 
 
 def describe_current() -> str:
+    import i18n
+
     try:
         gpus = discover()
     except OSError:
-        return "No se pudo leer la gráfica."
+        return i18n.t("gpu.unreadable")
     return describe(gpus, choose_record_gpu(gpus))
 
 
@@ -109,6 +112,8 @@ def discover() -> list[Gpu]:
                 vendor=vendor,
                 name=_short_name(vendor, raw_name),
                 outputs=outputs,
+                render_node=_render_node(device),
+                integrated=_integrated(vendor, outputs),
             )
         )
     _CACHE = (now, found)
@@ -117,6 +122,29 @@ def discover() -> list[Gpu]:
 
 def _is_card(name: str) -> bool:
     return name.startswith("card") and name[4:].isdigit()
+
+
+_PANEL = ("eDP", "LVDS", "DSI", "DPI")
+
+
+def _integrated(vendor: str, outputs: tuple[str, ...]) -> bool:
+    panel = any(name.startswith(_PANEL) for name in outputs)
+    if vendor == "nvidia":
+        return False
+    if vendor in {"amd", "intel"}:
+        return panel
+    return True
+
+
+def _render_node(device: Path) -> str:
+    drm = device / "drm"
+    try:
+        names = sorted(path.name for path in drm.iterdir() if path.name.startswith("renderD"))
+    except OSError:
+        return ""
+    if not names:
+        return ""
+    return f"/dev/dri/{names[0]}"
 
 
 def _connected_outputs(root: Path, card: str) -> list[str]:

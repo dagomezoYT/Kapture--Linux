@@ -72,6 +72,7 @@ DEFAULTS = {
     "audio_denoise_mic": True,
     "audio_denoise_strength": "media",
     "screenshot_format": "png",
+    "language": "es",
 }
 
 

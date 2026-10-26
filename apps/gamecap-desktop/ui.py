@@ -25,6 +25,7 @@ import encode_profile as enc
 import games
 import gpu as gpu_mod
 import gnome_hotkey
+import i18n
 import icons
 import library
 import session
@@ -291,33 +292,43 @@ entry {
 }
 switch:checked { background: #e10618; }
 .live-on { color: #e10618; font-weight: 800; }
+.ultra-box {
+  border: 1px solid #3a2a22;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #141820;
+}
 """
 
 NAV = (
-    ("grabar", "live", "Grabar"),
-    ("audio", "audio", "Audio"),
-    ("library", "folder", "Biblioteca"),
-    ("hotkeys", "keyboard", "Atajos"),
-    ("perf", "timer", "Rendimiento"),
-    ("settings", "settings", "Ajustes"),
+    ("grabar", "live", "nav.record"),
+    ("audio", "audio", "nav.audio"),
+    ("library", "folder", "nav.library"),
+    ("hotkeys", "keyboard", "nav.hotkeys"),
+    ("perf", "timer", "nav.perf"),
+    ("settings", "settings", "nav.settings"),
 )
 SIDE = (
-    ("game", "gamepad", "Juego"),
-    ("monitor", "monitor", "Pantalla"),
-    ("area", "area", "Ventana / Región"),
-    ("device", "device", "Dispositivo"),
+    ("game", "gamepad", "side.game"),
+    ("monitor", "monitor", "side.screen"),
+    ("area", "area", "side.window"),
+    ("device", "device", "side.device"),
 )
 AUDIO_MIX = (
-    (True, True, "Audio del juego + Micrófono"),
-    (True, False, "Solo juego"),
-    (False, True, "Solo micrófono"),
-    (False, False, "Sin audio"),
+    (True, True, "audio.mix.both"),
+    (True, False, "audio.mix.game"),
+    (False, True, "audio.mix.mic"),
+    (False, False, "audio.mix.none"),
 )
 AUDIO_TRACKS = (
-    ("both", "Mezclado + pistas separadas (respaldo)"),
-    ("mix", "Solo mezclado"),
-    ("separate", "Solo pistas separadas"),
+    ("both", "audio.tracks.both"),
+    ("mix", "audio.tracks.mix"),
+    ("separate", "audio.tracks.separate"),
 )
+_FPS_I18N = {60: "fps.60", 120: "fps.120", 180: "fps.180", 240: "fps.240", 0: "fps.auto"}
+_SCALE_I18N = {"0x0": "scale.native", "1920x1080": "scale.1080", "1280x720": "scale.720"}
+_CODEC_I18N = {key: f"codec.{key}" for key, _label in enc.CODECS}
+_CONTAINER_I18N = {key: f"container.{key}" for key, _label in enc.CONTAINERS}
 
 
 def output_dir() -> Path:
@@ -352,9 +363,9 @@ def fmt_when(path: Path) -> str:
         return "—"
     today = date.today()
     if ts.date() == today:
-        day = "Hoy"
+        day = i18n.t("date.today")
     elif (today - ts.date()).days == 1:
-        day = "Ayer"
+        day = i18n.t("date.yesterday")
     else:
         day = ts.strftime("%d/%m")
     return f"{day}, {ts.strftime('%H:%M')}"
@@ -423,6 +434,26 @@ def _dropdown_factory(width_chars: int) -> Gtk.SignalListItemFactory:
     return factory
 
 
+def _choice_labels(rows: tuple, keys: dict) -> list[str]:
+    return [i18n.t(keys.get(key, str(key))) for key, _label in rows]
+
+
+def _quality_labels(rows: tuple) -> list[str]:
+    labels = []
+    for key, raw in rows:
+        token = f"quality.{key}_cpu" if "CPU" in str(raw) else f"quality.{key}"
+        labels.append(i18n.t(token))
+    return labels
+
+
+def _record_gpu_name() -> str:
+    try:
+        chosen = gpu_mod.choose_record_gpu(gpu_mod.discover())
+    except OSError:
+        return "GPU"
+    return chosen.name if chosen is not None else "GPU"
+
+
 def combo(values: list[str], selected: int) -> Gtk.DropDown:
     widget = Gtk.DropDown(model=Gtk.StringList.new(values or ["—"]))
     widget.set_factory(_dropdown_factory(14))
@@ -456,6 +487,9 @@ class GameCapWindow(Adw.ApplicationWindow):
         self._player_mpv: subprocess.Popen | None = None
         self._thumb_busy = False
         data = cfg.load()
+        i18n.set_language(data.get("language") or "es")
+        self._i18n: list[tuple] = []
+        self._ultra_lock = False
 
         provider = Gtk.CssProvider()
         provider.load_from_data(CSS)
@@ -475,7 +509,7 @@ class GameCapWindow(Adw.ApplicationWindow):
         root.append(self.page_stack)
         status = Gtk.Box(spacing=12)
         status.add_css_class("statusline")
-        self.status = Gtk.Label(label="● Listo para grabar", xalign=0)
+        self.status = Gtk.Label(label=i18n.t("status.ready"), xalign=0)
         self.status.set_hexpand(True)
         self.status.set_ellipsize(Pango.EllipsizeMode.END)
         self.sys_lbl = Gtk.Label(label="CPU —  |  GPU —  |  RAM —  |  Disco —", xalign=1)
@@ -534,8 +568,9 @@ class GameCapWindow(Adw.ApplicationWindow):
         nav.set_halign(Gtk.Align.START)
         self.nav_btns: dict[str, Gtk.ToggleButton] = {}
         first = None
-        for key, icon, label in NAV:
-            btn, _img = self._text_icon(icon, 16, "nav-btn", label, horizontal=True, ellipsize=False)
+        for key, icon, label_key in NAV:
+            btn, _img = self._text_icon(icon, 16, "nav-btn", i18n.t(label_key), horizontal=True, ellipsize=False)
+            self._bind_caption(btn, label_key)
             if first is None:
                 first = btn
                 btn.set_active(True)
@@ -557,9 +592,11 @@ class GameCapWindow(Adw.ApplicationWindow):
         box = Gtk.Box(spacing=4)
         box.add_css_class("win-btns")
         box.set_valign(Gtk.Align.CENTER)
-        min_btn = self._win_btn("minimize", "Minimizar", self._do_minimize)
-        self.max_btn = self._win_btn("maximize", "Maximizar", self._do_maximize)
-        close_btn = self._win_btn("close", "Cerrar", self._do_close)
+        min_btn = self._win_btn("minimize", i18n.t("win.min"), self._do_minimize)
+        self._bind(min_btn, "win.min", "tooltip")
+        self.max_btn = self._win_btn("maximize", i18n.t("win.max"), self._do_maximize)
+        close_btn = self._win_btn("close", i18n.t("win.close"), self._do_close)
+        self._bind(close_btn, "win.close", "tooltip")
         close_btn.add_css_class("close")
         box.append(min_btn)
         box.append(self.max_btn)
@@ -598,7 +635,7 @@ class GameCapWindow(Adw.ApplicationWindow):
         if not hasattr(self, "max_btn"):
             return
         name = "restore" if self.is_maximized() else "maximize"
-        tip = "Restaurar" if self.is_maximized() else "Maximizar"
+        tip = i18n.t("win.restore") if self.is_maximized() else i18n.t("win.max")
         img = getattr(self.max_btn, "_icon_img", None)
         if isinstance(img, Gtk.Image):
             icons.paint(img, name, 14, MUTED)
@@ -710,14 +747,16 @@ class GameCapWindow(Adw.ApplicationWindow):
         rail.add_css_class("sidebar")
         rail.set_size_request(168, -1)
         rail.set_hexpand(False)
-        self.side_kicker = Gtk.Label(label="Captura", xalign=0)
+        self.side_kicker = Gtk.Label(label=i18n.t("side.capture"), xalign=0)
+        self._bind(self.side_kicker, "side.capture")
         self.side_kicker.add_css_class("kicker")
         rail.append(self.side_kicker)
         self.side_btns: dict[str, Gtk.ToggleButton] = {}
         self.mode_btns = self.side_btns
         first = None
-        for key, icon, label in SIDE:
-            btn, _img = self._text_icon(icon, 18, "side-btn", label, horizontal=True)
+        for key, icon, label_key in SIDE:
+            btn, _img = self._text_icon(icon, 18, "side-btn", i18n.t(label_key), horizontal=True)
+            self._bind_caption(btn, label_key)
             if first is None:
                 first = btn
             else:
@@ -730,26 +769,29 @@ class GameCapWindow(Adw.ApplicationWindow):
         rail.append(self.side_spacer)
         self.quick_btns: list[Gtk.Button] = []
         self.quick_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        quick = Gtk.Label(label="Acceso rápido", xalign=0)
+        quick = Gtk.Label(label=i18n.t("quick.access"), xalign=0)
         quick.add_css_class("kicker")
+        self._bind(quick, "quick.access")
         self.quick_box.append(quick)
-        self.quick_box.append(self._quick("user", "Perfil", lambda *_: self._show_page("settings")))
-        self.quick_box.append(self._quick("keyboard", "Atajos", lambda *_: self._open_panel("hotkeys")))
-        self.quick_box.append(self._quick("globe", "Idioma", self._language_pop))
+        self.quick_box.append(self._quick("user", "quick.profile", lambda *_: self._show_page("settings")))
+        self.quick_box.append(self._quick("keyboard", "quick.hotkeys", lambda *_: self._open_panel("hotkeys")))
+        self.quick_box.append(self._quick("globe", "quick.language", self._language_pop))
         rail.append(self.quick_box)
         return rail
 
-    def _quick(self, icon: str, label: str, callback) -> Gtk.Button:
+    def _quick(self, icon: str, key: str, callback) -> Gtk.Button:
         btn = Gtk.Button()
         btn.add_css_class("quick-btn")
         box = Gtk.Box(spacing=8)
         box.append(icons.image(icon, 16, MUTED))
-        lab = Gtk.Label(label=label, xalign=0)
+        lab = Gtk.Label(label=i18n.t(key), xalign=0)
         lab.set_ellipsize(Pango.EllipsizeMode.END)
         box.append(lab)
         btn.set_child(box)
         btn._caption = lab  # type: ignore[attr-defined]
-        btn.set_tooltip_text(label)
+        self._bind(lab, key)
+        btn.set_tooltip_text(i18n.t(key))
+        self._bind(btn, key, "tooltip")
         btn.connect("clicked", callback)
         self.quick_btns.append(btn)
         return btn
@@ -767,15 +809,17 @@ class GameCapWindow(Adw.ApplicationWindow):
         stage.set_valign(Gtk.Align.CENTER)
         stage.set_hexpand(True)
         stage.set_vexpand(True)
-        self.capture_badge = Gtk.Label(label="CAPTURA", xalign=0)
+        self.capture_badge = Gtk.Label(label=i18n.t("preview.badge"), xalign=0)
         self.capture_badge.add_css_class("kicker")
-        self.capture_title = Gtk.Label(label="Pantalla", xalign=0)
+        self._bind(self.capture_badge, "preview.badge")
+        self.capture_title = Gtk.Label(label=i18n.t("preview.screen"), xalign=0)
         self.capture_title.add_css_class("capture-title")
         self.capture_title.set_wrap(True)
         self.capture_sub = Gtk.Label(
-            label="Aquí se muestra la ventana o pantalla que se va a grabar.\nLos vídeos se reproducen aparte, no en esta zona.",
+            label=i18n.t("preview.sub"),
             xalign=0,
         )
+        self._bind(self.capture_sub, "preview.sub")
         self.capture_sub.add_css_class("capture-sub")
         self.capture_sub.set_wrap(True)
         self.capture_sub.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
@@ -810,7 +854,8 @@ class GameCapWindow(Adw.ApplicationWindow):
         top.append(spacer)
         top.append(self.metrics)
         overlay.add_overlay(top)
-        self.preview_hint = Gtk.Label(label="Vista de captura (no es el reproductor)")
+        self.preview_hint = Gtk.Label(label=i18n.t("preview.hint"))
+        self._bind(self.preview_hint, "preview.hint")
         self.preview_hint.add_css_class("preview-hint")
         self.preview_hint.set_halign(Gtk.Align.END)
         self.preview_hint.set_valign(Gtk.Align.END)
@@ -897,41 +942,35 @@ class GameCapWindow(Adw.ApplicationWindow):
     def _refresh_capture_preview(self) -> None:
         mode = next((k for k, b in self.mode_btns.items() if b.get_active()), "monitor")
         labels = {
-            "game": "Juego",
-            "monitor": "Pantalla completa",
-            "area": "Ventana / Región",
-            "device": "Dispositivo / cámara",
+            "game": i18n.t("side.game"),
+            "monitor": i18n.t("preview.full"),
+            "area": i18n.t("side.window"),
+            "device": i18n.t("preview.device"),
         }
-        title = labels.get(mode, "Captura")
-        detail = "Se grabará lo seleccionado a la izquierda. Esta zona no reproduce archivos."
+        title = labels.get(mode, i18n.t("side.capture"))
+        detail = i18n.t("preview.will")
         if mode == "game":
             game = self._selected_game() if hasattr(self, "game_drop") else None
             if game is not None:
                 title = game.title
-                detail = (
-                    f"Solo la ventana de {game.title}. "
-                    "No graba el escritorio: eso es el modo Pantalla."
-                )
-                if game.running:
-                    detail += " Ventana detectada."
-                else:
-                    detail += " Abre el juego antes de REC."
+                detail = i18n.t("preview.game_only", title=game.title)
+                detail += i18n.t("preview.game_seen") if game.running else i18n.t("preview.game_open")
             else:
-                title = "Juego"
-                detail = "Solo la ventana del juego. El escritorio completo es el modo Pantalla."
+                title = i18n.t("side.game")
+                detail = i18n.t("preview.game_empty")
         elif mode == "monitor":
             mon = ""
             if getattr(self, "mon_ids", None):
                 i = min(self.mon_drop.get_selected(), len(self.mon_ids) - 1)
                 mon = self.mon_ids[i]
-            title = f"Pantalla {mon}".strip() if mon else "Pantalla completa"
-            detail = "Todo el monitor, sin la franja del HUD. La ventana del juego es el modo Juego."
+            title = i18n.t("preview.monitor_named", name=mon).strip() if mon else i18n.t("preview.full")
+            detail = i18n.t("preview.monitor")
         elif mode == "area":
-            title = "Ventana / Región"
-            detail = "Solo el recuadro que dibujaste. No graba el monitor entero ni el modo Juego."
+            title = i18n.t("side.window")
+            detail = i18n.t("preview.area")
         elif mode == "device":
-            title = "Dispositivo"
-            detail = "Solo la cámara o la entrada HDMI. No graba el monitor ni el juego."
+            title = i18n.t("side.device")
+            detail = i18n.t("preview.device_detail")
         if hasattr(self, "capture_title"):
             self.capture_title.set_label(title)
             self.capture_sub.set_label(detail)
@@ -990,11 +1029,13 @@ class GameCapWindow(Adw.ApplicationWindow):
         box.set_vexpand(False)
         self.lib_box = box
         row = Gtk.Box(spacing=8)
-        title = Gtk.Label(label="Grabaciones recientes", xalign=0)
+        title = Gtk.Label(label=i18n.t("library.recent"), xalign=0)
         title.add_css_class("section-title")
         title.set_hexpand(True)
+        self._bind(title, "library.recent")
         row.append(title)
-        all_btn = Gtk.Button(label="Ver todas")
+        all_btn = Gtk.Button(label=i18n.t("library.all"))
+        self._bind(all_btn, "library.all")
         all_btn.add_css_class("link-btn")
         all_btn.connect("clicked", lambda *_: self._show_page("library"))
         row.append(all_btn)
@@ -1002,7 +1043,10 @@ class GameCapWindow(Adw.ApplicationWindow):
         self.lib_summary = Gtk.Label(label="", xalign=0)
         self.lib_summary.add_css_class("stat-muted")
         box.append(self.lib_summary)
-        self.sort_drop = combo(["Más recientes", "Por nombre", "Por tamaño"], 0)
+        self.sort_drop = combo(
+            [i18n.t("library.sort.recent"), i18n.t("library.sort.name"), i18n.t("library.sort.size")],
+            0,
+        )
         self.sort_drop.connect("notify::selected", lambda *_: self.reload_library())
         self.lib_stack = Gtk.Stack()
         self.lib_stack.set_vexpand(False)
@@ -1023,7 +1067,8 @@ class GameCapWindow(Adw.ApplicationWindow):
         self.flow.set_column_spacing(8)
         self.flow.connect("child-activated", self._on_card)
         scroll.set_child(self.flow)
-        empty = Gtk.Label(label="Aún no hay grabaciones. Al grabar aparecerán aquí.")
+        empty = Gtk.Label(label=i18n.t("library.empty"))
+        self._bind(empty, "library.empty")
         empty.add_css_class("library-empty")
         empty.set_halign(Gtk.Align.CENTER)
         empty.set_valign(Gtk.Align.CENTER)
@@ -1040,12 +1085,15 @@ class GameCapWindow(Adw.ApplicationWindow):
         box.set_margin_top(8)
         head = Gtk.Box(spacing=8)
         head.append(self._back_row())
-        title = Gtk.Label(label="Biblioteca", xalign=0)
+        title = Gtk.Label(label=i18n.t("library.title"), xalign=0)
         title.add_css_class("section-title")
         title.set_hexpand(True)
+        self._bind(title, "library.title")
         head.append(title)
-        self.tab_files = Gtk.ToggleButton(label="Vídeos")
-        self.tab_prev = Gtk.ToggleButton(label="Capturas")
+        self.tab_files = Gtk.ToggleButton(label=i18n.t("library.videos"))
+        self.tab_prev = Gtk.ToggleButton(label=i18n.t("library.shots"))
+        self._bind(self.tab_files, "library.videos")
+        self._bind(self.tab_prev, "library.shots")
         self.tab_files.add_css_class("tab")
         self.tab_prev.add_css_class("tab")
         self.tab_prev.set_group(self.tab_files)
@@ -1055,9 +1103,10 @@ class GameCapWindow(Adw.ApplicationWindow):
         head.append(self.tab_prev)
         box.append(head)
         hint = Gtk.Label(
-            label="Clic en un vídeo para reproducirlo aquí. Clic derecho: carpeta, copiar ruta o eliminar.",
+            label=i18n.t("library.help"),
             xalign=0,
         )
+        self._bind(hint, "library.help")
         hint.set_wrap(True)
         hint.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         hint.add_css_class("hint")
@@ -1084,8 +1133,9 @@ class GameCapWindow(Adw.ApplicationWindow):
         side.set_hexpand(False)
         side.set_size_request(400, -1)
         side.set_overflow(Gtk.Overflow.HIDDEN)
-        title = Gtk.Label(label="Configuración de grabación", xalign=0)
+        title = Gtk.Label(label=i18n.t("record.title"), xalign=0)
         title.add_css_class("section-title")
+        self._bind(title, "record.title")
         title.set_wrap(True)
         title.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         side.append(title)
@@ -1113,7 +1163,8 @@ class GameCapWindow(Adw.ApplicationWindow):
         self.hotkey_chip.add_css_class("keycap")
         hint = Gtk.Box(spacing=6)
         hint.set_halign(Gtk.Align.CENTER)
-        pre = Gtk.Label(label="Atajo")
+        pre = Gtk.Label(label=i18n.t("record.shortcut"))
+        self._bind(pre, "record.shortcut")
         pre.add_css_class("hint")
         hint.append(pre)
         hint.append(self.hotkey_chip)
@@ -1254,25 +1305,28 @@ class GameCapWindow(Adw.ApplicationWindow):
         refresh_games = Gtk.Button(label="↻")
         refresh_games.add_css_class("gear")
         refresh_games.connect("clicked", lambda *_: self._reload_games())
-        self.game_row = self._row("Juego", self.game_drop, refresh_games)
-        self.game_hint = self._hint(
-            "Detecta Minecraft (cualquier cliente) y juegos de Steam/Proton en ejecución. Pulsa ↻ para refrescar."
-        )
-        self.wait_game = Gtk.CheckButton(label="Esperar foco del juego")
+        self.game_row = self._labeled_row("record.game", self.game_drop, refresh_games)
+        self.game_hint = self._hint(i18n.t("record.game_hint"))
+        self._bind(self.game_hint, "record.game_hint")
+        self.wait_game = Gtk.CheckButton(label=i18n.t("record.wait_game"))
+        self._bind(self.wait_game, "record.wait_game")
         self.wait_game.set_active(bool(data.get("wait_for_game", False)))
 
-        self.fmt = combo(enc.labels(enc.CONTAINERS), enc.index_of(enc.CONTAINERS, data.get("container") or "mkv"))
-        self.codec = combo(enc.labels(enc.CODECS), enc.index_of(enc.CODECS, data.get("codec") or "av1"))
+        budget = enc.active_budget()
+        self._budget = budget
+        self._quality_rows = budget.qualities
+        self.fmt = combo(_choice_labels(enc.CONTAINERS, _CONTAINER_I18N), enc.index_of(enc.CONTAINERS, data.get("container") or "mkv"))
+        self.codec = combo(_choice_labels(enc.CODECS, _CODEC_I18N), enc.index_of(enc.CODECS, data.get("codec") or "av1"))
         self.quality = combo(
-            enc.labels(enc.QUALITIES),
-            enc.index_of(enc.QUALITIES, enc.normalize_quality(data.get("quality"))),
+            _quality_labels(budget.qualities),
+            enc.index_of(budget.qualities, enc.normalize_quality(data.get("quality"), budget)),
         )
         self.size = combo(
-            enc.labels(enc.SCALES),
+            _choice_labels(enc.SCALES, _SCALE_I18N),
             enc.index_of(enc.SCALES, str(data.get("scale") or "0x0"), {"native": "0x0", "original": "0x0"}),
         )
         fps_value = data.get("fps")
-        self.fps = combo(enc.labels(enc.FPS), enc.index_of(enc.FPS, enc.STABLE_FPS_CAP if fps_value is None else int(fps_value)))
+        self.fps = combo(_choice_labels(enc.FPS, _FPS_I18N), enc.index_of(enc.FPS, enc.STABLE_FPS_CAP if fps_value is None else int(fps_value)))
         mix_i = 0
         if data.get("audio_system", True) and data.get("audio_mic", False):
             mix_i = 0
@@ -1282,12 +1336,12 @@ class GameCapWindow(Adw.ApplicationWindow):
             mix_i = 2
         else:
             mix_i = 3
-        self.audio_mix = combo([row[2] for row in AUDIO_MIX], mix_i)
+        self.audio_mix = combo([i18n.t(row[2]) for row in AUDIO_MIX], mix_i)
         track_i = next(
             (i for i, (k, _) in enumerate(AUDIO_TRACKS) if k == data.get("audio_tracks")),
             0,
         )
-        self.audio_tracks = combo([row[1] for row in AUDIO_TRACKS], track_i)
+        self.audio_tracks = combo([i18n.t(row[1]) for row in AUDIO_TRACKS], track_i)
         ins = audio_mod.inputs() or [("default_input", "Micrófono por defecto")]
         self.in_ids = [i for i, _ in ins]
         self.in_drop = combo([n for _, n in ins], self._index(self.in_ids, data.get("audio_mic_device")))
@@ -1328,51 +1382,151 @@ class GameCapWindow(Adw.ApplicationWindow):
         browse = Gtk.Button()
         browse.add_css_class("toolbar-btn")
         browse.set_child(icons.image("folder", 16, MUTED))
-        browse.set_tooltip_text("Cambiar carpeta de vídeos")
+        browse.set_tooltip_text(i18n.t("record.folder_tip"))
+        self._bind(browse, "record.folder_tip", "tooltip")
         browse.connect("clicked", self._choose_folder)
         folder_row = Gtk.Box(spacing=6)
         folder_row.add_css_class("folder-box")
         folder_row.append(self.folder_entry)
         folder_row.append(browse)
 
-        for w in (self.fmt, self.codec, self.quality, self.size, self.fps, self.mon_drop, self.cam_drop, self.out_drop, self.audio_mix, self.audio_tracks, self.in_drop):
+        for w in (self.fmt, self.codec, self.size, self.fps, self.mon_drop, self.cam_drop, self.out_drop, self.audio_mix, self.audio_tracks, self.in_drop):
             w.connect("notify::selected", lambda *_: self._persist())
+        self.quality.connect("notify::selected", self._on_quality_selected)
         for w in (self.hud, self.show_timer, self.cursor):
             w.connect("notify::active", lambda *_: self._persist())
         self.wait_game.connect("toggled", lambda *_: self._persist())
         self.sys_vol.connect("value-changed", self._on_sys_vol)
 
-        box.append(self._row("Formato", self.fmt))
-        box.append(self._row("Codificador", self.codec))
-        box.append(self._row("Calidad", self.quality))
-        box.append(self._row("Resolución", self.size))
-        box.append(self._row("FPS", self.fps))
-        box.append(self._row("Audio", self.audio_mix))
-        keyint_label = f"{enc.KEYINT_DEFAULT:.1f}".replace(".", ",")
-        box.append(
-            self._hint(
-                f"Modo estable: 1080p · Alta · {enc.STABLE_FPS_CAP} · "
-                f"fotograma clave cada {keyint_label} s. Si hay tirones, baja a Media."
-            )
+        box.append(self._labeled_row("record.format", self.fmt))
+        box.append(self._labeled_row("record.codec", self.codec))
+        box.append(self._labeled_row("record.quality", self.quality))
+        box.append(self._ultra_section(_record_gpu_name()))
+        box.append(self._labeled_row("record.resolution", self.size))
+        box.append(self._labeled_row("record.fps", self.fps))
+        box.append(self._labeled_row("record.audio", self.audio_mix))
+        self.stable_hint = self._hint(
+            i18n.t("record.stable", fps=enc.STABLE_FPS_CAP, keyint=f"{enc.KEYINT_DEFAULT:.1f}")
         )
-        box.append(self._hint(gpu_mod.describe_current()))
-        box.append(
-            self._hint(
-                "Dispositivos y bitrate: pestaña Audio. Al grabar siempre van 3 pistas (MKV + carpeta «…-audio»)."
-            )
-        )
-        # Bloque siempre visible (no Expander): juego, mic, HUD, carpeta.
-        box.append(self._heading("Ajustes avanzados"))
+        self._bind(self.stable_hint, "record.stable", fps=enc.STABLE_FPS_CAP, keyint=f"{enc.KEYINT_DEFAULT:.1f}")
+        box.append(self.stable_hint)
+        self.gpu_hint = self._hint(gpu_mod.describe_current())
+        box.append(self.gpu_hint)
+        self.tracks_hint = self._hint(i18n.t("record.tracks"))
+        self._bind(self.tracks_hint, "record.tracks")
+        box.append(self.tracks_hint)
+        advanced = self._heading(i18n.t("record.advanced"))
+        self._bind(advanced.get_first_child(), "record.advanced")
+        box.append(advanced)
         box.append(self.game_row)
         box.append(self.game_hint)
-        box.append(self._row("Micrófono", self.in_drop))
-        box.append(self._switch_row("HUD para el jugador (no sale en el vídeo)", self.hud))
-        box.append(self._switch_row("Capturar cursor", self.cursor))
-        box.append(Gtk.Label(label="Carpeta de salida", xalign=0))
+        box.append(self._labeled_row("record.mic", self.in_drop))
+        box.append(self._labeled_switch("record.hud", self.hud))
+        box.append(self._labeled_switch("record.cursor", self.cursor))
+        folder_caption = Gtk.Label(label=i18n.t("record.folder"), xalign=0)
+        self._bind(folder_caption, "record.folder")
+        box.append(folder_caption)
         box.append(folder_row)
         self.config_stack.add_named(box, "record")
         self.game_row.set_visible(current == "game")
         self.game_hint.set_visible(current == "game")
+        self._sync_ultra_from_quality()
+
+    def _labeled_row(self, key: str, widget: Gtk.Widget, extra: Gtk.Widget | None = None) -> Gtk.Box:
+        row = self._row(i18n.t(key), widget, extra)
+        self._bind(row.get_first_child(), key)
+        return row
+
+    def _labeled_switch(self, key: str, widget: Gtk.Widget) -> Gtk.Box:
+        row = self._switch_row(i18n.t(key), widget)
+        self._bind(row.get_first_child(), key)
+        return row
+
+    def _ultra_section(self, gpu_name: str) -> Gtk.Box:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.add_css_class("ultra-box")
+        title = Gtk.Label(label=i18n.t("ultra.title"), xalign=0)
+        title.add_css_class("section-title")
+        body = self._hint(i18n.t("ultra.body", gpu=gpu_name))
+        self.ultra_check = Gtk.CheckButton(label=i18n.t("ultra.use"))
+        self.ultra_check.connect("toggled", self._on_ultra_toggled)
+        box.append(title)
+        box.append(body)
+        box.append(self.ultra_check)
+        box.set_visible(enc.allows_ultra(self._budget))
+        self.ultra_box = box
+        self._bind(title, "ultra.title")
+        self._bind(body, "ultra.body", gpu=gpu_name)
+        self._bind(self.ultra_check, "ultra.use")
+        return box
+
+    def _bind(self, widget, key: str, attr: str = "label", **fmt: object) -> None:
+        self._i18n.append((widget, key, attr, dict(fmt)))
+
+    def _bind_caption(self, btn: Gtk.Widget, key: str) -> None:
+        caption = getattr(btn, "_caption", None)
+        if caption is not None:
+            self._bind(caption, key)
+        self._bind(btn, key, "tooltip")
+
+    def _write_i18n(self, widget, key: str, attr: str, fmt: dict) -> None:
+        text = i18n.t(key, **fmt)
+        if attr == "tooltip":
+            widget.set_tooltip_text(text)
+        else:
+            widget.set_label(text)
+
+    def _set_choice(self, widget: Gtk.DropDown, labels: list[str]) -> None:
+        selected = widget.get_selected()
+        widget.set_model(Gtk.StringList.new(labels or ["—"]))
+        widget.set_selected(max(0, min(selected, max(len(labels) - 1, 0))))
+
+    def _refill_choices(self) -> None:
+        self._save_lock = True
+        self._set_choice(self.fmt, _choice_labels(enc.CONTAINERS, _CONTAINER_I18N))
+        self._set_choice(self.codec, _choice_labels(enc.CODECS, _CODEC_I18N))
+        self._set_choice(self.quality, _quality_labels(self._quality_rows))
+        self._set_choice(self.size, _choice_labels(enc.SCALES, _SCALE_I18N))
+        self._set_choice(self.fps, _choice_labels(enc.FPS, _FPS_I18N))
+        self._set_choice(self.audio_mix, [i18n.t(row[2]) for row in AUDIO_MIX])
+        self._set_choice(self.audio_tracks, [i18n.t(row[1]) for row in AUDIO_TRACKS])
+        self._set_choice(
+            self.sort_drop,
+            [i18n.t("library.sort.recent"), i18n.t("library.sort.name"), i18n.t("library.sort.size")],
+        )
+        self._save_lock = False
+        self._sync_ultra_from_quality()
+
+    def _apply_language(self) -> None:
+        for widget, key, attr, fmt in self._i18n:
+            self._write_i18n(widget, key, attr, fmt)
+        self._refill_choices()
+        if hasattr(self, "gpu_hint"):
+            self.gpu_hint.set_label(gpu_mod.describe_current())
+        self._refresh_capture_preview()
+        self._on_maximized_changed()
+        self.status.set_label(self.controller.status_text())
+        self.reload_library()
+
+    def _on_quality_selected(self, *_args) -> None:
+        self._sync_ultra_from_quality()
+        self._persist()
+
+    def _sync_ultra_from_quality(self) -> None:
+        if not hasattr(self, "ultra_check") or self._ultra_lock:
+            return
+        key = enc.value_at(self._quality_rows, self.quality.get_selected())
+        self._ultra_lock = True
+        self.ultra_check.set_active(key == "ultra")
+        self._ultra_lock = False
+
+    def _on_ultra_toggled(self, btn: Gtk.CheckButton) -> None:
+        if self._ultra_lock or not self.ultra_box.get_visible():
+            return
+        target = "ultra" if btn.get_active() else "high"
+        index = enc.index_of(self._quality_rows, target)
+        if self.quality.get_selected() != index:
+            self.quality.set_selected(index)
 
     def _back_row(self, label: str = "← Volver a Grabar") -> Gtk.Button:
         btn = Gtk.Button(label=label)
@@ -1384,13 +1538,18 @@ class GameCapWindow(Adw.ApplicationWindow):
 
     def _build_audio_box(self, data: dict) -> Gtk.Box:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        self.denoise_ambient = Gtk.CheckButton(label="Quitar ruido de ambiente")
-        self.denoise_static = Gtk.CheckButton(label="Quitar estática / hiss")
-        self.denoise_dirty = Gtk.CheckButton(label="Quitar ruido sucio y clics")
-        self.denoise_system = Gtk.CheckButton(label="El sonido del juego se guarda tal cual")
+        self.denoise_ambient = Gtk.CheckButton(label=i18n.t("audio.ambient"))
+        self.denoise_static = Gtk.CheckButton(label=i18n.t("audio.static"))
+        self.denoise_dirty = Gtk.CheckButton(label=i18n.t("audio.dirty"))
+        self.denoise_system = Gtk.CheckButton(label=i18n.t("audio.game_raw"))
         self.denoise_system.set_sensitive(False)
         self.denoise_system.set_active(False)
-        self.denoise_mic = Gtk.CheckButton(label="Limpiar micrófono")
+        self.denoise_mic = Gtk.CheckButton(label=i18n.t("audio.mic"))
+        self._bind(self.denoise_ambient, "audio.ambient")
+        self._bind(self.denoise_static, "audio.static")
+        self._bind(self.denoise_dirty, "audio.dirty")
+        self._bind(self.denoise_system, "audio.game_raw")
+        self._bind(self.denoise_mic, "audio.mic")
         self.denoise_ambient.set_active(bool(data.get("audio_denoise_ambient", True)))
         self.denoise_static.set_active(bool(data.get("audio_denoise_static", True)))
         self.denoise_dirty.set_active(bool(data.get("audio_denoise_dirty", True)))
@@ -1411,24 +1570,27 @@ class GameCapWindow(Adw.ApplicationWindow):
         self.save_audio_folder.set_active(bool(data.get("save_audio_folder", True)))
         self.save_audio_folder.connect("notify::active", lambda *_: self._persist())
         hint = Gtk.Label(
-            label="Siempre se graban 3 pistas. 02-juego.wav es el sonido del juego tal cual, sin filtro ni límite. La estática se limpia solo en el micrófono. La mezcla es juego + mic, también sin procesar.",
+            label=i18n.t("audio.note"),
             xalign=0,
             wrap=True,
         )
+        self._bind(hint, "audio.note")
         hint.add_css_class("hint")
         box.append(self._back_row())
-        box.append(self._heading("Audio"))
+        audio_head = self._heading(i18n.t("nav.audio"))
+        self._bind(audio_head.get_first_child(), "nav.audio")
+        box.append(audio_head)
         box.append(hint)
-        box.append(self._switch_row("Guardar pistas en carpeta junto al vídeo", self.save_audio_folder))
-        box.append(self._row("Pistas", self.audio_tracks))
-        box.append(self._row("Salida / juego", self.out_drop))
-        box.append(self._row("Calidad", self.abitrate))
+        box.append(self._labeled_switch("audio.save_folder", self.save_audio_folder))
+        box.append(self._labeled_row("audio.tracks_row", self.audio_tracks))
+        box.append(self._labeled_row("audio.output", self.out_drop))
+        box.append(self._labeled_row("record.quality", self.abitrate))
         box.append(self.denoise_ambient)
         box.append(self.denoise_static)
         box.append(self.denoise_dirty)
         box.append(self.denoise_system)
         box.append(self.denoise_mic)
-        box.append(self._row("Intensidad", self.denoise_str))
+        box.append(self._labeled_row("audio.strength", self.denoise_str))
         return box
 
     def _build_camera_box(self, data: dict) -> Gtk.Box:
@@ -1629,16 +1791,40 @@ class GameCapWindow(Adw.ApplicationWindow):
             self.config_stack.set_visible_child_name(name)
 
     def _language_pop(self, btn: Gtk.Button) -> None:
+        old = getattr(self, "_lang_pop", None)
+        if old is not None:
+            old.unparent()
         pop = Gtk.Popover()
-        lab = Gtk.Label(label="Español")
-        lab.set_margin_top(8)
-        lab.set_margin_bottom(8)
-        lab.set_margin_start(12)
-        lab.set_margin_end(12)
-        pop.set_child(lab)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        box.set_margin_top(8)
+        box.set_margin_bottom(8)
+        box.set_margin_start(12)
+        box.set_margin_end(12)
+        group = None
+        current = i18n.language()
+        for code, name in i18n.LANGUAGES:
+            row = Gtk.CheckButton(label=name)
+            if group is None:
+                group = row
+            else:
+                row.set_group(group)
+            row.connect("toggled", self._on_language, code)
+            if code == current:
+                row.set_active(True)
+            box.append(row)
+        pop.set_child(box)
         pop.set_parent(btn)
         pop.popup()
         self._lang_pop = pop
+
+    def _on_language(self, btn: Gtk.CheckButton, code: str) -> None:
+        if not btn.get_active() or i18n.language() == code:
+            return
+        i18n.set_language(code)
+        data = cfg.load()
+        data["language"] = i18n.language()
+        cfg.save(data)
+        self._apply_language()
 
     def _on_lib_kind(self, *_args) -> None:
         self.lib_filter = "videos" if self.tab_files.get_active() else "shots"
@@ -1672,9 +1858,9 @@ class GameCapWindow(Adw.ApplicationWindow):
             key = self._selected_game_key()
             app = next((g for g in self.game_apps if g.key == key), None)
             if app and app.running:
-                self.status.set_label(f"Juego: {app.title}. Solo su ventana, no la pantalla.")
+                self.status.set_label(i18n.t("status.game_open", title=app.title))
             else:
-                self.status.set_label("Juego listo. Abre la ventana del juego y pulsa REC.")
+                self.status.set_label(i18n.t("status.game_wait"))
             return
         if mode == "area":
             data = cfg.load()
@@ -1710,7 +1896,8 @@ class GameCapWindow(Adw.ApplicationWindow):
         data = cfg.load()
         data["container"] = enc.value_at(enc.CONTAINERS, self.fmt.get_selected())
         data["codec"] = enc.value_at(enc.CODECS, self.codec.get_selected())
-        data["quality"] = enc.value_at(enc.QUALITIES, self.quality.get_selected())
+        data["quality"] = enc.value_at(self._quality_rows, self.quality.get_selected())
+        data["language"] = i18n.language()
         data["fps"] = enc.value_at(enc.FPS, self.fps.get_selected())
         data["scale"] = enc.value_at(enc.SCALES, self.size.get_selected())
         data["cursor"] = self.cursor.get_active()
@@ -2308,6 +2495,7 @@ class GameCapApp(Adw.Application):
 
 
 def main() -> int:
+    enc.warm_codec_cache()
     Adw.init()
     return GameCapApp().run(sys.argv)
 

@@ -619,6 +619,7 @@ def stop_recording() -> None:
 
 
 def start_recording() -> subprocess.Popen | None:
+    enc.warm_codec_cache()
     if is_recording():
         return None
     CACHE.mkdir(parents=True, exist_ok=True)
@@ -772,16 +773,24 @@ def _append_capture_target(cmd: list[str], cfg: dict) -> None:
 
 
 def _encode_args(cfg: dict, container: str) -> list[str]:
-    fps = enc.capture_fps(cfg.get("fps"), bool(cfg.get("capture_stable_fps", True)))
+    plan = enc.plan_encode(
+        cfg.get("codec"),
+        cfg.get("quality"),
+        cfg.get("fps"),
+        bool(cfg.get("capture_stable_fps", True)),
+        cfg.get("scale"),
+        enc.active_budget(),
+        enc.cached_codecs(),
+    )
     args = [
         "--fps",
-        str(fps),
+        str(plan.fps),
         "--codec",
-        str(cfg.get("codec") or "av1"),
+        plan.codec,
         "--container",
         container,
         "--quality",
-        enc.normalize_quality(cfg.get("quality")),
+        plan.quality,
         "--cursor",
         "yes" if cfg.get("cursor", True) else "no",
         "--frame-mode",
@@ -791,9 +800,10 @@ def _encode_args(cfg: dict, container: str) -> list[str]:
         "--keyint",
         f"{enc.clamp_keyint(cfg.get('encode_keyint')):.1f}",
     ]
-    scale = str(cfg.get("scale") or "0x0").strip()
-    if not enc.is_native_scale(scale):
-        args.extend(["--scale", scale])
+    if plan.scale:
+        args.extend(["--scale", plan.scale])
+    if plan.encoder:
+        args.extend(["--encoder", plan.encoder])
     return args
 
 

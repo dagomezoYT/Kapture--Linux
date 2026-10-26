@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+import i18n
 import session
 
 
@@ -29,13 +30,13 @@ class Snapshot:
     path: str = ""
 
 
-_STATUS_LABEL = {
-    RecordingState.IDLE: "● Listo para grabar",
-    RecordingState.PREPARING: "● Preparando…",
-    RecordingState.RECORDING: "● Grabando",
-    RecordingState.PAUSED: "● En pausa",
-    RecordingState.STOPPING: "● Deteniendo…",
-    RecordingState.ERROR: "● Error",
+_STATUS_KEY = {
+    RecordingState.IDLE: "status.ready",
+    RecordingState.PREPARING: "status.preparing",
+    RecordingState.RECORDING: "status.recording",
+    RecordingState.PAUSED: "status.paused",
+    RecordingState.STOPPING: "status.stopping",
+    RecordingState.ERROR: "status.error",
 }
 
 
@@ -44,7 +45,8 @@ class RecordingController:
 
     def __init__(self) -> None:
         self._state = RecordingState.IDLE
-        self._message = "Listo para grabar"
+        self._message = ""
+        self._message_key = "status.ready"
         self._error = ""
         self._was_alive = False
 
@@ -56,20 +58,14 @@ class RecordingController:
         if self._state == RecordingState.ERROR and self._error:
             return f"● {self._error}"
         if self._state == RecordingState.RECORDING and elapsed > 0:
-            total = max(int(elapsed), 0)
-            hh, rem = divmod(total, 3600)
-            mm, ss = divmod(rem, 60)
-            clock = f"{hh}:{mm:02d}:{ss:02d}" if hh else f"{mm:02d}:{ss:02d}"
-            return f"● Grabando {clock}"
+            return i18n.t("status.recording_clock", clock=_clock(elapsed))
         if self._state == RecordingState.PAUSED and elapsed > 0:
-            total = max(int(elapsed), 0)
-            hh, rem = divmod(total, 3600)
-            mm, ss = divmod(rem, 60)
-            clock = f"{hh}:{mm:02d}:{ss:02d}" if hh else f"{mm:02d}:{ss:02d}"
-            return f"● En pausa {clock}"
+            return i18n.t("status.paused_clock", clock=_clock(elapsed))
+        if self._state == RecordingState.IDLE and self._message_key:
+            return i18n.t(self._message_key)
         if self._state == RecordingState.IDLE and self._message:
             return f"● {self._message}"
-        return _STATUS_LABEL.get(self._state, "● Listo para grabar")
+        return i18n.t(_STATUS_KEY.get(self._state, "status.ready"))
 
     def toggle(self) -> Snapshot:
         if self._state in {RecordingState.RECORDING, RecordingState.PAUSED, RecordingState.PREPARING}:
@@ -88,31 +84,32 @@ class RecordingController:
             self._state = RecordingState.ERROR
             self._error = str(err)
             self._message = self._error
+            self._message_key = ""
             return self.poll()
         self._state = RecordingState.RECORDING
-        self._message = "Grabando"
+        self._message_key = "status.recording"
         self._was_alive = True
         return self.poll()
 
     def stop(self) -> Snapshot:
         self._state = RecordingState.STOPPING
-        self._message = "Deteniendo…"
+        self._message_key = "status.stopping"
         session.stop_recording()
         return self.poll()
 
     def pause_toggle(self) -> Snapshot:
         if self._state not in {RecordingState.RECORDING, RecordingState.PAUSED}:
-            self._message = "No hay grabación activa"
+            self._message_key = "status.no_recording"
             return self.poll()
         result = session.toggle_pause()
         if result == "pause":
             self._state = RecordingState.PAUSED
-            self._message = "En pausa"
+            self._message_key = "status.paused"
         elif result == "resume":
             self._state = RecordingState.RECORDING
-            self._message = "Grabando"
+            self._message_key = "status.recording"
         else:
-            self._message = "No se pudo pausar"
+            self._message_key = "status.pause_failed"
         return self.poll()
 
     def poll(self) -> Snapshot:
@@ -143,7 +140,7 @@ class RecordingController:
             if alive:
                 return Snapshot(self._state, elapsed, fps, free_gb, self.status_text(elapsed), path)
             self._state = RecordingState.IDLE
-            self._message = "Toma guardada"
+            self._message_key = "status.saved"
             self._was_alive = False
             return Snapshot(self._state, 0.0, 0.0, free_gb, self.status_text(), path)
 
@@ -162,14 +159,24 @@ class RecordingController:
             except Exception:
                 pass
             self._state = RecordingState.IDLE
-            self._message = "Toma guardada"
+            self._message_key = "status.saved"
             return Snapshot(self._state, 0.0, 0.0, free_gb, self.status_text(), path)
 
         if self._state not in {RecordingState.IDLE, RecordingState.ERROR}:
             self._state = RecordingState.IDLE
-            self._message = "Listo para grabar"
+            self._message_key = "status.ready"
         return Snapshot(self._state, 0.0, 0.0, free_gb, self.status_text(), path)
 
     def set_idle_message(self, text: str) -> None:
         if self._state == RecordingState.IDLE:
+            self._message_key = ""
             self._message = text
+
+
+def _clock(elapsed: float) -> str:
+    total = max(int(elapsed), 0)
+    hh, rem = divmod(total, 3600)
+    mm, ss = divmod(rem, 60)
+    if hh:
+        return f"{hh}:{mm:02d}:{ss:02d}"
+    return f"{mm:02d}:{ss:02d}"

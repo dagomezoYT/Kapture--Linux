@@ -202,7 +202,7 @@ fn clear_cloexec(fd: impl AsFd) -> Result<(), String> {
     fcntl_setfd(fd, FdFlags::empty()).map_err(|e| format!("fcntl: {e}"))
 }
 
-/// True when GStreamer can encode AV1 on the AMD display GPU.
+/// True when GStreamer can encode AV1 through VA-API (AMD or Intel).
 pub fn gst_vaav1enc_available() -> bool {
     gst_element_available("vaav1enc", "VA-API")
 }
