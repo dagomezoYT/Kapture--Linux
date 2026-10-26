@@ -126,16 +126,19 @@ gpu-screen-recorder arguments from that budget. The user’s saved 60 fps and
 
 | Display GPU | Budget | Stable fps ceiling | Quality | Codec if the probe has run | Encoder flag |
 | --- | --- | ---: | --- | --- | --- |
-| AMD or Intel (this 780M) | `vaapi-safe` | 60 | `medium`, `high` | keep the request when it is listed; otherwise AV1, then HEVC, then H.264 | none (GPU) |
-| NVIDIA, and it owns the only connected output | `nvenc` | 240 | adds `very_high`, `ultra` | same fallback | none (GPU) |
+| AMD or Intel with a panel (this 780M) | `vaapi-safe` | 60 | `medium`, `high` | keep the request when it is listed; otherwise AV1, then HEVC, then H.264 | none (GPU) |
+| Discrete AMD or Intel, external output only | `vaapi-discrete` | 120 | adds `very_high`, `ultra` | same fallback | none (GPU) |
+| NVIDIA, and it owns the connected output | `nvenc` | 240 | adds `very_high`, `ultra` | same fallback | none (GPU) |
 | Other PCI vendor (virtio, VMware, …) | `software` | 30 | `medium`, `high` | forced H.264 | `cpu` |
-| Probe failed, or no connected output | `vaapi-safe` | 60 | same as AMD/Intel | request kept | none |
+| Probe failed, or no connected output | `vaapi-safe` | 60 | same as a panel AMD/Intel | request kept | none |
 
-`very_high` and `ultra` stay blocked on VA-API. On this 780M they inflated
-bitrate and hitched pans. Discrete AMD and Intel cards stay on that safe
-budget too: the recorder does not guess that a bigger chip can absorb the
-preset. NVIDIA is the exception because the hitch was a VA-API behavior and
-NVENC is a different encoder.
+`very_high` and `ultra` stay blocked on a panel AMD or Intel GPU. On this
+780M they inflated bitrate and hitched pans. A discrete AMD or Intel card
+that owns the screen may use Ultra, with a 120 fps ceiling. NVIDIA that owns
+the screen may use Ultra up to 240. The desktop shows the Ultra section only
+for those two cases. The saved default remains 60 fps and `high`. The UI
+language (Spanish by default, English from the sidebar) does not change this
+plan.
 
 Codec fallback uses the list from `gpu-screen-recorder --info`. On this host
 that list is AV1 / AV1 HDR / AV1 10-bit. A saved `av1` therefore stays `av1`.
@@ -158,8 +161,9 @@ against the live budget and the codec list above:
 | extra encoder flag | none |
 
 Those are the same arguments the recorder already sent. The Rust supervisor
-also maps `very_high` / `ultra` back to `high` unless the display vendor is
-NVIDIA, so a hand-written CLI command on this laptop cannot bypass the cap.
+maps `very_high` / `ultra` back to `high` unless the display GPU may hold
+Ultra (NVIDIA, or AMD/Intel with no panel connector). A hand-written CLI
+command on this laptop cannot bypass the cap.
 
 ## What was left alone
 

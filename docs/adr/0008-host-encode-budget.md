@@ -44,3 +44,12 @@ gpu-screen-recorder arguments. A NVIDIA-only desktop can use the presets the
 UI shows for that budget. A host with no supported vendor still produces a
 file instead of failing the GPU codec. The core still does not write clocks,
 firmware, or sysfs.
+
+## Amendment
+
+A discrete AMD or Intel GPU with only an external output uses
+`vaapi-discrete`: `very_high` and `ultra` are kept, and the stable fps ceiling
+is 120. AMD or Intel with a panel connector stays on `vaapi-safe`. The desktop
+draws the Ultra section only when that budget allows Ultra. UI language is
+Spanish by default and English from the sidebar. It does not change the encode
+plan.

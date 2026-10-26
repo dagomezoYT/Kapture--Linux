@@ -1,74 +1,79 @@
-# GameCap
+# Kapture
 
-Grabadora de juegos multiplataforma (Windows + Linux) orientada a fidelidad temporal, visual y sonora.
+Linux desktop recorder. The window is Kapture. The capture binary is `gamecap`.
+A take is captured and encoded by gpu-screen-recorder on the GPU that owns the
+connected display, then muxed to MKV with separate audio tracks.
 
-Este repositorio implementa la arquitectura descrita en el documento técnico. **Milestone M0** construye el esqueleto verificable: workspace, tipos, traits, máquina de estados, colas acotadas, métricas y backends sintéticos. No incluye WGC, PipeWire, NVENC ni UI.
+The synthetic core (bounded queues, rational timestamps, fake 144 fps session)
+is still in the workspace and is what `cargo test` exercises. It does not
+record the screen. The desktop does.
 
-## Requisitos
+## Run
 
-- Rust 1.80+ (`rustc`, `cargo`)
-- No hay dependencias de crates.io en las librerías del M0 (solo `std`)
-
-## Ejecutar tests
-
-Desde la raíz del workspace:
-
-```bash
-cargo test --workspace
-```
-
-Solo el contrato M0 (10 s @ 144 FPS sintéticos):
-
-```bash
-cargo test -p gamecap-integration-tests ten_seconds_at_144_fps_is_exact_and_drop_free -- --nocapture
-```
-
-Tests unitarios de políticas y tipos:
-
-```bash
-cargo test -p gamecap-types
-cargo test -p gamecap-core
-cargo test -p gamecap-encoder
-```
-
-Clippy (el workspace deniega `unwrap`/`expect` en código de librería):
-
-```bash
-cargo clippy --workspace --all-targets -- -D warnings
-```
-
-## Cómo ejecutarlo
-
-Doble clic en `ejecutar.sh` o en `GameCap.desktop`, o desde la carpeta del proyecto:
+From the repository root:
 
 ```bash
 ./ejecutar.sh
 ```
 
-La primera vez compila y deja el binario en `bin/gamecap`. Después solo lanza la prueba (10 s @ 144 FPS sintéticos). **No graba la pantalla todavía.**
+That opens the GTK window. The same entry point with arguments runs the CLI
+(`record`, `toggle`, `pause`, `screenshot`, `replay`). The first CLI build
+writes `bin/gamecap`.
 
-Si ya compilaste, también vale:
+Desktop smoke checks, without starting a recording:
 
 ```bash
-./bin/gamecap
+python3 apps/gamecap-desktop/test_smoke.py
 ```
 
-## Qué cubre M0
+Workspace tests:
 
-- Reloj monotónico común y timestamps racionales (sin float en PTS)
-- Traits `VideoCaptureBackend`, `AudioCaptureBackend`, `VideoEncoder`, `Muxer`
-- `RecorderSession` con máquina de estados y colas acotadas
-- `FakeCaptureBackend` (60/144/240 FPS) y `FakeAudioBackend` (48 kHz, pistas separadas)
-- `NullEncoder` / `NullMuxer` para medir timing sin codec
-- Drops clasificados (`source_gap`, `encode_backpressure`, `memory_limit`, …); nunca se ocultan en un FPS promedio
-- SDR/HDR como pipelines explícitos; el core no convierte GPU→CPU automáticamente
-- Límites de RAM y disco; parada o degradación si encoder/GPU/almacenamiento se saturan
-- Sin overclock, sin escritura a firmware/BIOS/`/sys`/dispositivos raw, sin exigir root
+```bash
+cargo test --workspace
+```
 
-## Qué no cubre M0
+## Language
 
-Backends reales (WGC/DXGI, portal/PipeWire, WASAPI), encoders de hardware, contenedor MKV real y la UI de escritorio. Las crates correspondientes existen como stubs compilables para no acoplar el core más adelante.
+The interface is Spanish by default. **Idioma** in the left sidebar switches
+the window to English: navigation, capture view, library, recording panel, and
+status line. The choice is stored as `language` (`es` or `en`) in
+`~/.config/gamecap/settings.json` and is restored on the next launch.
 
-## Decisiones M0
+An unknown code falls back to Spanish. The encode plan does not change with
+the language.
 
-Ver `docs/adr/`.
+## Ultra
+
+Ultra is a heavier gpu-screen-recorder preset (more detail, more bitrate).
+The section is drawn only after the app reads the DRM cards and classifies
+the GPU that owns the screen. A stronger card that is present but has no
+connected output does not count.
+
+| Display GPU | Ultra in the UI | Stable fps ceiling | Budget |
+| --- | --- | ---: | --- |
+| AMD or Intel with a panel (`eDP`, `LVDS`, `DSI`, `DPI`), including this laptop’s Radeon 780M | Hidden. `ultra` and `very_high` become `high`. | 60 | `vaapi-safe` |
+| Discrete AMD or Intel, external output only | Shown. Ultra can be selected. | 120 | `vaapi-discrete` |
+| NVIDIA, and it owns the connected output | Shown. Ultra can be selected. | 240 | `nvenc` |
+| Any other vendor | Hidden. H.264 on the CPU, 1280×720 if the scale was native. | 30 | `software` |
+| Probe failed, or no connected output | Hidden. | 60 | `vaapi-safe` |
+
+The saved default stays 60 fps and quality `high` on every budget. Opening the
+app on a faster GPU does not start a heavier take by itself. On this
+development laptop the panel is the 780M and the RTX 5070 has no output, so
+Ultra stays hidden and the command line stays AV1, `high`, 60 fps,
+1920×1080, with no `-encoder` flag. The RTX stays free for the game.
+
+The same gate is in the CLI: `very_high` and `ultra` are kept only when the
+display GPU is allowed to hold them.
+
+## Hardware and performance
+
+- [Recording performance](docs/performance/README.md) — measured cost of the
+  stable profile on this host, and the encode budgets.
+- [Hardware compatibility](docs/compatibility/README.md) — which GPU records,
+  and how a missing codec probe is treated.
+- [Architecture](docs/architecture/README.md) — core versus platform backends.
+- [ADR 0008](docs/adr/0008-host-encode-budget.md) — why the budget follows the
+  display GPU.
+
+The recorder does not change clocks, firmware, or sysfs.
